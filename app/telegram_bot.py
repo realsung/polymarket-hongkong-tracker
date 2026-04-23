@@ -26,6 +26,25 @@ class TelegramBot:
             await self._session.close()
             self._session = None
 
+    async def set_commands(self, commands: list[tuple[str, str]]) -> None:
+        """Register command autocomplete with Telegram (shows on '/' typed)."""
+        if self._session is None:
+            return
+        payload = {
+            "commands": [
+                {"command": c.lstrip("/"), "description": d} for c, d in commands
+            ]
+        }
+        try:
+            async with self._session.post(
+                f"{self._base}/setMyCommands", json=payload
+            ) as resp:
+                data = await resp.json()
+                if not data.get("ok"):
+                    logger.warning("setMyCommands not ok: %s", data)
+        except Exception:
+            logger.exception("setMyCommands failed")
+
     async def send(self, text: str, parse_mode: str = "HTML") -> Optional[dict]:
         if self._session is None:
             return None

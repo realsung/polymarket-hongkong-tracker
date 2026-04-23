@@ -18,6 +18,16 @@ from .telegram_bot import TelegramBot
 HKT = ZoneInfo("Asia/Hong_Kong")
 logger = logging.getLogger(__name__)
 
+BOT_COMMANDS: list[tuple[str, str]] = [
+    ("status",   "Current HKO temp + today's summary + Polymarket buckets"),
+    ("today",    "Today's high / low / peak estimate"),
+    ("history",  "Recent temperature changes from DB (/history [N])"),
+    ("markets",  "Polymarket buckets for today"),
+    ("forecast", "HKO 9-day forecast"),
+    ("stats",    "Storage & notification stats"),
+    ("help",     "Show command help"),
+]
+
 HELP_TEXT = (
     "<b>Polymarket HK Weather Tracker</b>\n"
     "Tracks Hong Kong Observatory temperature and alerts on every change.\n\n"
@@ -231,6 +241,7 @@ class App:
         await self.db.open()
         await self.hko.start()
         await self.bot.start()
+        await self.bot.set_commands(BOT_COMMANDS)
         if self.poly is not None:
             await self.poly.start()
         logger.info(
