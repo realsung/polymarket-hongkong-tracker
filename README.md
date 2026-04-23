@@ -6,7 +6,7 @@
 
 | 영역 | 동작 |
 |---|---|
-| HKO 폴링 | `/wxinfo/json/one_json.xml` 을 기본 60초마다 호출 |
+| HKO 폴링 | `/wxinfo/json/one_json.xml` 을 기본 10초마다 호출, `If-None-Match`(ETag) 조건부 GET 으로 변화 없을 땐 `304 Not Modified`(바디 0바이트, ~60ms) 단락 — 서버 `Cache-Control: max-age=30` 존중 |
 | 알림 | `hko.Temperature` 가 직전 bulletin 대비 바뀌면(≥0.1°C) Telegram 발송 |
 | 피크 예측 | 최근 1h 기울기 + HKO 예보 최고 + HKT 13:00–16:30 창으로 ETA 추정, 피크 90분+ 하락 시 **confirmed** |
 | Polymarket 버킷 | Gamma API 로 오늘의 HK 이벤트 조회, 11개 버킷(≤18, 19…27, ≥28°C) Yes 확률을 메시지·DB 에 반영 |
@@ -40,9 +40,9 @@ docker compose logs -f hko-tracker
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | *(필수)* | BotFather 토큰 |
 | `TELEGRAM_CHAT_ID` | *(필수)* | 봇이 메시지를 보낼 chat id (다른 chat 의 명령은 무시) |
-| `POLL_INTERVAL_SECONDS` | `60` | HKO 폴링 주기 |
-| `TEMP_CHANGE_THRESHOLD` | `0.0` | `0.0` 이면 HKO 해상도(0.1°C) 모든 변화 알림. `0.5` 로 올리면 큰 변화만 |
-| `NOTIFY_DAILY_SUMMARY_HKT` | `23:55` | 일일 요약 발송 시각 (HKT, `HH:MM`) |
+| `POLL_INTERVAL_SECONDS` | `10` | HKO 폴링 주기. ETag 캐싱 덕분에 변화 없으면 304 로 비용 최소화 |
+| `TEMP_CHANGE_THRESHOLD` | `0.0` | `0.0` 이면 HKO 해상도(0.1°C) 모든 변화(상승·하강 양방향) 알림. `0.5` 로 올리면 큰 변화만 |
+| `NOTIFY_DAILY_SUMMARY_HKT` | `21:00` | 일일 요약 발송 시각 (HKT, `HH:MM`) |
 | `POLYMARKET_ENABLED` | `true` | `false` 로 끄면 버킷 섹션 생략 |
 | `POLYMARKET_GAMMA_URL` | `https://gamma-api.polymarket.com` | Gamma API 엔드포인트 |
 | `POLYMARKET_EVENT_SLUG` | *(빈값)* | 특정 이벤트로 고정하려면 명시. 기본은 HKT 날짜에서 자동 유도 |

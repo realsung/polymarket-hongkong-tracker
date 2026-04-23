@@ -101,6 +101,11 @@ class HkoClient:
     def __init__(self, url: str):
         self.url = url
         self._session: Optional[aiohttp.ClientSession] = None
+        self._etag: Optional[str] = None
+        self._last_modified: Optional[str] = None
+        self._cached_reading: Optional[Reading] = None
+        self.stats_200 = 0
+        self.stats_304 = 0
 
     async def start(self) -> None:
         self._session = aiohttp.ClientSession(
@@ -114,9 +119,31 @@ class HkoClient:
             self._session = None
 
     async def fetch(self) -> Reading:
+        """Fetch latest reading. Uses If-None-Match / If-Modified-Since to
+        short-circuit with 304 when HKO has not published a new bulletin yet.
+        On 304 returns the previously parsed Reading unchanged."""
         if self._session is None:
             raise RuntimeError("HkoClient.start() was not called")
-        async with self._session.get(self.url) as resp:
+
+        cond_headers: dict[str, str] = {}
+        if self._etag:
+            cond_headers["If-None-Match"] = self._etag
+        if self._last_modified:
+            cond_headers["If-Modified-Since"] = self._last_modified
+
+        async with self._session.get(self.url, headers=cond_headers) as resp:
+            if resp.status == 304 and self._cached_reading is not None:
+                self.stats_304 += 1
+                logger.debug("HKO 304 Not Modified (etag=%s)", self._etag)
+                return self._cached_reading
             resp.raise_for_status()
             data = await resp.json(content_type=None)
-        return parse_reading(data)
+            etag = resp.headers.get("ETag")
+            lm = resp.headers.get("Last-Modified")
+
+        reading = parse_reading(data)
+        self._etag = etag
+        self._last_modified = lm
+        self._cached_reading = reading
+        self.stats_200 += 1
+        return reading

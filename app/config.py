@@ -37,7 +37,7 @@ def load_config() -> Config:
     return Config(
         telegram_bot_token=_require("TELEGRAM_BOT_TOKEN"),
         telegram_chat_id=_require("TELEGRAM_CHAT_ID"),
-        poll_interval_seconds=int(os.environ.get("POLL_INTERVAL_SECONDS", "60")),
+        poll_interval_seconds=int(os.environ.get("POLL_INTERVAL_SECONDS", "10")),
         temp_change_threshold=float(os.environ.get("TEMP_CHANGE_THRESHOLD", "0.0")),
         db_path=os.environ.get("DB_PATH", "/data/hko.db"),
         log_level=os.environ.get("LOG_LEVEL", "INFO").upper(),
@@ -45,7 +45,7 @@ def load_config() -> Config:
             "HKO_URL",
             "https://www.weather.gov.hk/wxinfo/json/one_json.xml",
         ),
-        notify_daily_summary_hkt=os.environ.get("NOTIFY_DAILY_SUMMARY_HKT", "23:55"),
+        notify_daily_summary_hkt=os.environ.get("NOTIFY_DAILY_SUMMARY_HKT", "21:00"),
         polymarket_enabled=_bool("POLYMARKET_ENABLED", True),
         polymarket_gamma_url=os.environ.get(
             "POLYMARKET_GAMMA_URL", "https://gamma-api.polymarket.com"
