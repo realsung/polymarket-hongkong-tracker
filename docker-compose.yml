@@ -1,0 +1,17 @@
+services:
+  hko-tracker:
+    build: .
+    image: polymarket-hko-tracker:latest
+    container_name: polymarket-hko-tracker
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TZ: Asia/Hong_Kong
+      DB_PATH: /data/hko.db
+    volumes:
+      - ./data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
