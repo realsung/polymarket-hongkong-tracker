@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 from dataclasses import dataclass
 from datetime import date
 from typing import Optional
@@ -43,17 +44,22 @@ class HkBuckets:
         return max(self.buckets, key=lambda b: b.yes_price) if self.buckets else None
 
     def containing(self, value: float) -> Optional[Bucket]:
+        """Return the bucket into which a fractional temperature resolves.
+
+        Polymarket HK temperature markets resolve by the integer part
+        (floor), e.g. 23.9°C → 23°C bucket, 24.1°C → 24°C bucket.
+        """
         if not self.buckets:
             return None
-        rounded = int(round(value))
+        floored = int(math.floor(value))
         for b in self.buckets:
-            if b.kind == "exact" and b.temp == rounded:
+            if b.kind == "exact" and b.temp == floored:
                 return b
         for b in self.buckets:
-            if b.kind == "or_below" and rounded <= b.temp:
+            if b.kind == "or_below" and floored <= b.temp:
                 return b
         for b in self.buckets:
-            if b.kind == "or_higher" and rounded >= b.temp:
+            if b.kind == "or_higher" and floored >= b.temp:
                 return b
         return None
 
