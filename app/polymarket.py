@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass
@@ -36,6 +37,7 @@ class HkBuckets:
     end_date_iso: str
     total_volume: float
     buckets: list[Bucket]
+    kind: str  # 'highest' | 'lowest'
 
     def top(self) -> Optional[Bucket]:
         return max(self.buckets, key=lambda b: b.yes_price) if self.buckets else None
@@ -56,9 +58,11 @@ class HkBuckets:
         return None
 
 
-def event_slug_for(hkt_today: date) -> str:
+def event_slug_for(hkt_today: date, kind: str = "highest") -> str:
+    if kind not in ("highest", "lowest"):
+        raise ValueError(f"unsupported kind: {kind}")
     m = _MONTHS[hkt_today.month - 1]
-    return f"highest-temperature-in-hong-kong-on-{m}-{hkt_today.day}-{hkt_today.year}"
+    return f"{kind}-temperature-in-hong-kong-on-{m}-{hkt_today.day}-{hkt_today.year}"
 
 
 def _parse_prices(v) -> list[float]:
@@ -146,9 +150,17 @@ def _parse_bucket(market: dict) -> Optional[Bucket]:
 
 
 class PolymarketClient:
-    def __init__(self, gamma_url: str, event_slug_override: Optional[str] = None):
+    def __init__(
+        self,
+        gamma_url: str,
+        high_slug_override: Optional[str] = None,
+        low_slug_override: Optional[str] = None,
+    ):
         self.base = gamma_url.rstrip("/")
-        self.override = (event_slug_override or "").strip() or None
+        self._overrides = {
+            "highest": (high_slug_override or "").strip() or None,
+            "lowest": (low_slug_override or "").strip() or None,
+        }
         self._session: Optional[aiohttp.ClientSession] = None
 
     async def start(self) -> None:
@@ -161,13 +173,17 @@ class PolymarketClient:
             await self._session.close()
             self._session = None
 
-    def slug_for(self, hkt_today: date) -> str:
-        return self.override or event_slug_for(hkt_today)
+    def slug_for(self, hkt_today: date, kind: str = "highest") -> str:
+        return self._overrides.get(kind) or event_slug_for(hkt_today, kind)
 
-    async def fetch_hk_buckets(self, hkt_today: date) -> Optional[HkBuckets]:
+    async def fetch_hk_buckets(
+        self, hkt_today: date, kind: str = "highest"
+    ) -> Optional[HkBuckets]:
         if self._session is None:
             raise RuntimeError("PolymarketClient.start() was not called")
-        slug = self.slug_for(hkt_today)
+        if kind not in ("highest", "lowest"):
+            raise ValueError(f"unsupported kind: {kind}")
+        slug = self.slug_for(hkt_today, kind)
         try:
             async with self._session.get(
                 f"{self.base}/events", params={"slug": slug}
@@ -205,4 +221,15 @@ class PolymarketClient:
             end_date_iso=ev.get("endDate") or "",
             total_volume=vol,
             buckets=buckets,
+            kind=kind,
         )
+
+    async def fetch_hk_buckets_pair(
+        self, hkt_today: date
+    ) -> tuple[Optional[HkBuckets], Optional[HkBuckets]]:
+        """Fetch highest & lowest HK events concurrently."""
+        high, low = await asyncio.gather(
+            self.fetch_hk_buckets(hkt_today, "highest"),
+            self.fetch_hk_buckets(hkt_today, "lowest"),
+        )
+        return high, low

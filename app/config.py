@@ -16,7 +16,8 @@ class Config:
     notify_daily_summary_hkt: str
     polymarket_enabled: bool
     polymarket_gamma_url: str
-    polymarket_event_slug_override: str
+    polymarket_event_slug_high_override: str
+    polymarket_event_slug_low_override: str
 
 
 def _require(key: str) -> str:
@@ -50,7 +51,12 @@ def load_config() -> Config:
         polymarket_gamma_url=os.environ.get(
             "POLYMARKET_GAMMA_URL", "https://gamma-api.polymarket.com"
         ),
-        polymarket_event_slug_override=os.environ.get(
-            "POLYMARKET_EVENT_SLUG", ""
+        # POLYMARKET_EVENT_SLUG is kept as a back-compat alias for highest.
+        polymarket_event_slug_high_override=(
+            os.environ.get("POLYMARKET_EVENT_SLUG_HIGH", "").strip()
+            or os.environ.get("POLYMARKET_EVENT_SLUG", "").strip()
+        ),
+        polymarket_event_slug_low_override=os.environ.get(
+            "POLYMARKET_EVENT_SLUG_LOW", ""
         ).strip(),
     )

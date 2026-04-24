@@ -59,36 +59,53 @@ def _fmt_forecast_range(fmin: Optional[float], fmax: Optional[float]) -> str:
     return f"{lo}–{hi}°C"
 
 
+def _fmt_volume(vol: float) -> str:
+    if vol >= 1_000_000:
+        return f"${vol / 1_000_000:.2f}M"
+    if vol >= 1_000:
+        return f"${vol / 1_000:.1f}k"
+    return f"${vol:.0f}"
+
+
 def format_polymarket_block(
     buckets: Optional[HkBuckets],
-    running_max: Optional[float],
+    running_value: Optional[float],
 ) -> list[str]:
-    """Return a list of lines representing Polymarket buckets, or [] if unavailable."""
+    """Return a list of lines representing one event's buckets, or [] if unavailable."""
     if buckets is None or not buckets.buckets:
         return []
     marker_bucket = (
-        buckets.containing(running_max) if running_max is not None else None
+        buckets.containing(running_value) if running_value is not None else None
     )
     top = buckets.top()
+    running_label = "today's low" if buckets.kind == "lowest" else "today's high"
+    kind_label = "LOWEST" if buckets.kind == "lowest" else "HIGHEST"
+
     label_width = max(len(b.label) for b in buckets.buckets)
     rows = []
     for b in buckets.buckets:
         pct = b.yes_price * 100.0
         marker = ""
         if marker_bucket is not None and b.slug == marker_bucket.slug:
-            marker = "  ← now"
+            marker = f"  ← {running_label}"
         elif top is not None and b.slug == top.slug:
             marker = "  ★"
         rows.append(f"{b.label.rjust(label_width)}  {pct:5.1f}%{marker}")
 
-    vol = buckets.total_volume
-    vol_str = (
-        f"${vol / 1_000_000:.2f}M" if vol >= 1_000_000
-        else f"${vol / 1_000:.1f}k" if vol >= 1_000
-        else f"${vol:.0f}"
-    )
-    header = f"🎯 Polymarket buckets · vol {vol_str}"
+    header = f"🎯 Polymarket {kind_label} · vol {_fmt_volume(buckets.total_volume)}"
     return ["", header, "<pre>" + "\n".join(rows) + "</pre>"]
+
+
+def format_polymarket_blocks(
+    high: Optional[HkBuckets],
+    low: Optional[HkBuckets],
+    running_max: Optional[float],
+    running_min: Optional[float],
+) -> list[str]:
+    lines: list[str] = []
+    lines += format_polymarket_block(high, running_max)
+    lines += format_polymarket_block(low, running_min)
+    return lines
 
 
 def format_change_message(
@@ -96,7 +113,8 @@ def format_change_message(
     prev_temp: Optional[float],
     summary: DailySummary,
     pred: PeakEstimate,
-    buckets: Optional[HkBuckets] = None,
+    high: Optional[HkBuckets] = None,
+    low: Optional[HkBuckets] = None,
 ) -> str:
     delta = _fmt_delta(reading.temperature, prev_temp)
     lines = [
@@ -113,14 +131,18 @@ def format_change_message(
     ]
     if reading.rh is not None:
         lines.append(f"\nHumidity: {reading.rh}%")
-    lines += format_polymarket_block(buckets, running_max=summary.max_temp)
+    lines += format_polymarket_blocks(
+        high, low,
+        running_max=summary.max_temp, running_min=summary.min_temp,
+    )
     return "\n".join(lines)
 
 
 def format_today_message(
     summary: DailySummary,
     pred: PeakEstimate,
-    buckets: Optional[HkBuckets] = None,
+    high: Optional[HkBuckets] = None,
+    low: Optional[HkBuckets] = None,
 ) -> str:
     lines = [
         f"<b>📅 {summary.hkt_date} (HKT)</b>",
@@ -134,7 +156,10 @@ def format_today_message(
         f"<b>Peak estimate</b> [{pred.confidence}]",
         f"  {escape(pred.note)}",
     ]
-    lines += format_polymarket_block(buckets, running_max=summary.max_temp)
+    lines += format_polymarket_blocks(
+        high, low,
+        running_max=summary.max_temp, running_min=summary.min_temp,
+    )
     return "\n".join(lines)
 
 
@@ -180,17 +205,29 @@ def format_history_message(events: list[TempChangeEvent]) -> str:
     return header + "\n<pre>" + "\n".join(rows) + "</pre>"
 
 
-def format_markets_message(buckets: Optional[HkBuckets], running_max: Optional[float]) -> str:
-    if buckets is None:
+def format_markets_message(
+    high: Optional[HkBuckets],
+    low: Optional[HkBuckets],
+    running_max: Optional[float],
+    running_min: Optional[float],
+) -> str:
+    if high is None and low is None:
         return "No Polymarket HK event found for today."
-    if not buckets.buckets:
-        return f"Event <b>{escape(buckets.event_slug)}</b> has no buckets."
-    block = format_polymarket_block(buckets, running_max=running_max)
-    header = (
-        f"<b>🎯 {escape(buckets.event_title or buckets.event_slug)}</b>\n"
-        f"<i>{escape(buckets.event_slug)}</i>"
-    )
-    return header + "\n" + "\n".join(block)
+
+    parts: list[str] = []
+    for buckets, running_value in ((high, running_max), (low, running_min)):
+        if buckets is None or not buckets.buckets:
+            continue
+        header = (
+            f"<b>🎯 {escape(buckets.event_title or buckets.event_slug)}</b>\n"
+            f"<i>{escape(buckets.event_slug)}</i>"
+        )
+        block = format_polymarket_block(buckets, running_value=running_value)
+        parts.append(header + "\n" + "\n".join(block))
+
+    if not parts:
+        return "Polymarket event exists but has no buckets yet."
+    return "\n\n".join(parts)
 
 
 def format_forecast_message(reading: Reading) -> str:
@@ -230,7 +267,8 @@ class App:
         self.poly: Optional[PolymarketClient] = (
             PolymarketClient(
                 cfg.polymarket_gamma_url,
-                cfg.polymarket_event_slug_override or None,
+                high_slug_override=cfg.polymarket_event_slug_high_override or None,
+                low_slug_override=cfg.polymarket_event_slug_low_override or None,
             )
             if cfg.polymarket_enabled
             else None
@@ -260,15 +298,17 @@ class App:
             await self.poly.stop()
         await self.db.close()
 
-    async def _fetch_buckets(self, hkt_date: str) -> Optional[HkBuckets]:
+    async def _fetch_buckets_pair(
+        self, hkt_date: str
+    ) -> tuple[Optional[HkBuckets], Optional[HkBuckets]]:
         if self.poly is None:
-            return None
+            return None, None
         try:
             d = datetime.strptime(hkt_date, "%Y-%m-%d").date()
-            return await self.poly.fetch_hk_buckets(d)
+            return await self.poly.fetch_hk_buckets_pair(d)
         except Exception:
-            logger.exception("polymarket fetch failed")
-            return None
+            logger.exception("polymarket pair fetch failed")
+            return None, None
 
     async def run(self) -> None:
         await self.bot.send("🟢 <b>HK weather tracker online.</b>\n\n" + HELP_TEXT)
@@ -334,13 +374,14 @@ class App:
         if summary is None:
             summary = self._summary_from_reading(reading)
         pred = estimate_peak(readings_today, reading.forecast_max)
-        buckets = await self._fetch_buckets(reading.hkt_date)
-        if buckets is not None:
-            try:
-                await self.db.record_market_snapshot(reading.hkt_date, buckets)
-            except Exception:
-                logger.exception("record_market_snapshot failed")
-        msg = format_change_message(reading, prev_temp, summary, pred, buckets)
+        high, low = await self._fetch_buckets_pair(reading.hkt_date)
+        for b in (high, low):
+            if b is not None:
+                try:
+                    await self.db.record_market_snapshot(reading.hkt_date, b)
+                except Exception:
+                    logger.exception("record_market_snapshot failed")
+        msg = format_change_message(reading, prev_temp, summary, pred, high, low)
         await self.bot.send(msg)
         await self.db.record_notification(
             kind="temp_change",
@@ -438,14 +479,15 @@ class App:
         if summary is None:
             summary = self._summary_from_reading(reading)
         pred = estimate_peak(readings_today, reading.forecast_max)
-        buckets = await self._fetch_buckets(reading.hkt_date)
+        high, low = await self._fetch_buckets_pair(reading.hkt_date)
         await self.bot.send(
             format_change_message(
                 reading,
                 prev.temperature if prev else None,
                 summary,
                 pred,
-                buckets,
+                high,
+                low,
             )
         )
 
@@ -457,8 +499,8 @@ class App:
             return
         readings = await self.db.readings_for_date(hkt_date)
         pred = estimate_peak(readings, summary.forecast_max)
-        buckets = await self._fetch_buckets(hkt_date)
-        await self.bot.send(format_today_message(summary, pred, buckets))
+        high, low = await self._fetch_buckets_pair(hkt_date)
+        await self.bot.send(format_today_message(summary, pred, high, low))
 
     async def _cmd_history(self, limit: int) -> None:
         events = await self.db.recent_temp_changes(limit)
@@ -469,10 +511,13 @@ class App:
             await self.bot.send("Polymarket integration is disabled.")
             return
         hkt_date = datetime.now(HKT).strftime("%Y-%m-%d")
-        buckets = await self._fetch_buckets(hkt_date)
+        high, low = await self._fetch_buckets_pair(hkt_date)
         summary = await self.db.daily_summary(hkt_date)
         running_max = summary.max_temp if summary else None
-        await self.bot.send(format_markets_message(buckets, running_max))
+        running_min = summary.min_temp if summary else None
+        await self.bot.send(
+            format_markets_message(high, low, running_max, running_min)
+        )
 
     async def _cmd_forecast(self) -> None:
         try:

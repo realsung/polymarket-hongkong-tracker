@@ -9,7 +9,7 @@
 | HKO 폴링 | `/wxinfo/json/one_json.xml` 을 기본 10초마다 호출, `If-None-Match`(ETag) 조건부 GET 으로 변화 없을 땐 `304 Not Modified`(바디 0바이트, ~60ms) 단락 — 서버 `Cache-Control: max-age=30` 존중 |
 | 알림 | `hko.Temperature` 가 직전 bulletin 대비 바뀌면(≥0.1°C) Telegram 발송 |
 | 피크 예측 | 최근 1h 기울기 + HKO 예보 최고 + HKT 13:00–16:30 창으로 ETA 추정, 피크 90분+ 하락 시 **confirmed** |
-| Polymarket 버킷 | Gamma API 로 오늘의 HK 이벤트 조회, 11개 버킷(≤18, 19…27, ≥28°C) Yes 확률을 메시지·DB 에 반영 |
+| Polymarket 버킷 | Gamma API 로 오늘의 HK **highest + lowest** 두 이벤트를 병렬 조회, 각 11개 버킷 Yes 확률·볼륨을 메시지·DB 에 반영. 현재 최고/최저 기온이 속한 버킷은 `← today's high` / `← today's low`, 각 이벤트 최다 확률 버킷은 `★` 로 표시 |
 | 일일 요약 | 매일 23:55 HKT 에 오늘 최고/최저/수신건수 1회 발송 (idempotent) |
 | 명령 | `/status` `/today` `/markets` `/forecast` `/stats` `/help` |
 | 저장 | SQLite 3-테이블 (`readings`, `notifications`, `market_snapshots`) 영속화 |
@@ -45,7 +45,8 @@ docker compose logs -f hko-tracker
 | `NOTIFY_DAILY_SUMMARY_HKT` | `21:00` | 일일 요약 발송 시각 (HKT, `HH:MM`) |
 | `POLYMARKET_ENABLED` | `true` | `false` 로 끄면 버킷 섹션 생략 |
 | `POLYMARKET_GAMMA_URL` | `https://gamma-api.polymarket.com` | Gamma API 엔드포인트 |
-| `POLYMARKET_EVENT_SLUG` | *(빈값)* | 특정 이벤트로 고정하려면 명시. 기본은 HKT 날짜에서 자동 유도 |
+| `POLYMARKET_EVENT_SLUG_HIGH` | *(빈값)* | highest 이벤트 슬러그 강제 지정 (기본: HKT 날짜 자동 유도). 구 `POLYMARKET_EVENT_SLUG` 는 back-compat 으로 여기에 매핑됨 |
+| `POLYMARKET_EVENT_SLUG_LOW` | *(빈값)* | lowest 이벤트 슬러그 강제 지정 |
 | `HKO_URL` | `https://www.weather.gov.hk/wxinfo/json/one_json.xml` | HKO 엔드포인트 |
 | `DB_PATH` | `/data/hko.db` | SQLite 경로 (컨테이너 내부, `./data` 볼륨에 영속화) |
 | `LOG_LEVEL` | `INFO` | `DEBUG` / `INFO` / `WARNING` |
@@ -133,11 +134,12 @@ sqlite3 data/hko.db "SELECT fetched_at_utc, temp, kind, yes_price FROM market_sn
 
 ## Polymarket 통합
 
-- Gamma API `GET /events?slug=...` 한 번으로 이벤트 + 하위 11 마켓을 받아옵니다.
-- Slug 규칙: `highest-temperature-in-hong-kong-on-{month}-{day}-{year}` (HKT 날짜).
+- Gamma API `GET /events?slug=...` 로 **highest + lowest 두 이벤트를 `asyncio.gather` 병렬 조회**.
+- Slug 규칙: `{highest|lowest}-temperature-in-hong-kong-on-{month}-{day}-{year}` (HKT 날짜).
 - 각 마켓의 `outcomePrices` JSON 문자열에서 Yes/No 확률을 추출, `volume` 은 달러 기준.
-- 알림 발송 시마다 11개 버킷을 `market_snapshots` 에 한 번에 insert 합니다.
-- 이벤트가 아직 올라오지 않았거나 네트워크 오류면 알림은 그대로 전송하고 버킷 섹션만 생략합니다.
+- 알림 발송 시마다 각 이벤트 11개 버킷씩 총 22행을 `market_snapshots` 에 insert.
+- 어느 한 쪽이 아직 올라오지 않았거나 네트워크 오류면 해당 블록만 생략하고 나머지는 그대로 표시.
+- 최고기온 → highest 이벤트 버킷(`← today's high`) / 최저기온 → lowest 이벤트 버킷(`← today's low`) 자동 하이라이트.
 
 ## 로컬 개발 (선택)
 
